@@ -801,18 +801,57 @@
         </div>
       </section>
 
-      <!-- TAB 6: CHAT HISTORY & SUMMARY -->
+      <!-- TAB 6: CHAT HISTORY, CONTEXT & SUMMARY -->
       <section class="tab-page" id="page-chathistory">
-        <div class="split-view">
-          <!-- Card 1: History -->
-          <div class="card glass flex-1">
-            <div class="card-header">
+        <div class="chat-tab-grid">
+          <!-- Card 1: Chat Context (System Prompt & Persona) -->
+          <div class="card glass chat-card flex-1">
+            <div class="card-header border-b">
               <div class="header-title-group">
-                <h3><i data-lucide="history"></i> Chat History</h3>
+                <h3><i data-lucide="file-text"></i> Chat Context</h3>
+                <span class="badge badge-info" id="contextCharBadge">0 chars</span>
               </div>
-              <button class="btn-icon" id="btnRefreshHistory" title="Refresh History">
-                <i data-lucide="refresh-cw"></i>
-              </button>
+              <div class="header-actions flex items-center gap-2">
+                <button class="btn btn-secondary btn-xs" id="btnCopyContext" title="Copy Context Text">
+                  <i data-lucide="copy"></i> Copy
+                </button>
+                <button class="btn btn-success btn-xs" id="btnSaveContext" title="Save Context Changes">
+                  <i data-lucide="check"></i> Save
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label for="chatContextInput" class="flex justify-between items-center">
+                  <span>System Context & Persona / Scenario:</span>
+                  <span class="text-sub text-xs">Auto-synced from system messages</span>
+                </label>
+                <textarea id="chatContextInput" class="form-textarea code-font chat-context-textarea" rows="22" placeholder="No system context recorded yet. System messages sent in /v1/chat/completions will automatically populate here..."></textarea>
+              </div>
+              <div class="context-footer-help mt-2">
+                <span class="text-sub text-xs"><i data-lucide="info" class="inline-icon"></i> System context is captured automatically during roleplay turns. You can also edit and click Save.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Chat History (User & Assistant Dialogue) -->
+          <div class="card glass chat-card flex-1">
+            <div class="card-header border-b">
+              <div class="header-title-group">
+                <h3><i data-lucide="history"></i> Chat Messages</h3>
+                <span class="badge badge-purple" id="historyMsgBadge">0 msgs</span>
+              </div>
+              <div class="header-actions flex items-center gap-2">
+                <button class="btn btn-secondary btn-xs" id="btnCopyAllHistory" title="Copy All Messages">
+                  <i data-lucide="copy"></i> Copy All
+                </button>
+                <button class="btn-icon" id="btnRefreshHistory" title="Refresh History">
+                  <i data-lucide="refresh-cw"></i>
+                </button>
+                <button class="btn btn-danger btn-outline btn-xs" id="btnClearHistory" title="Clear Chat History">
+                  <i data-lucide="trash-2"></i> Clear
+                </button>
+              </div>
             </div>
             <div class="card-body">
               <div class="chat-history-container" id="chatHistoryContainer">
@@ -821,15 +860,17 @@
             </div>
           </div>
 
-          <!-- Card 2: Summary -->
-          <div class="card glass flex-1">
-            <div class="card-header">
+          <!-- Card 3: Summary Generator -->
+          <div class="card glass chat-card flex-1">
+            <div class="card-header border-b">
               <div class="header-title-group">
-                <h3><i data-lucide="sparkles"></i> Chat Summary Generator</h3>
+                <h3><i data-lucide="sparkles"></i> Summary Generator</h3>
               </div>
-              <button class="btn btn-secondary btn-sm" id="btnCopySummary" title="Copy Summary Result">
-                <i data-lucide="copy"></i> Copy Summary
-              </button>
+              <div class="header-actions">
+                <button class="btn btn-secondary btn-xs" id="btnCopySummary" title="Copy Summary Result">
+                  <i data-lucide="copy"></i> Copy Summary
+                </button>
+              </div>
             </div>
             <div class="card-body">
               <div class="form-group mb-3">
@@ -841,7 +882,7 @@
 
               <div class="form-group mb-3">
                 <label for="summaryPrompt">Summary System Prompt:</label>
-                <textarea id="summaryPrompt" class="form-textarea code-font" rows="10">&lt;System_prompt&gt;
+                <textarea id="summaryPrompt" class="form-textarea code-font" rows="8">&lt;System_prompt&gt;
 Please Generate a detailed summary using bullet points day by day from your chat history.
 For example:
 `

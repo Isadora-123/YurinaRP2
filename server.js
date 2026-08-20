@@ -17,7 +17,15 @@ const { compileLorebookStore, extractCurrentDay, isLorebookStoreActive, shouldIn
 const { processWorldStateTick, compileWorldStateSnapshot } = require('./scripts/worldStateEngine');
 const { analyzeAndUpdateState } = require('./scripts/stateTracker');
 const { fetchFullWorldState, saveFullWorldState } = require('./scripts/upstashWorldState');
-const { fetchChatHistory, saveChatHistory, fetchChatSummary, saveChatSummary } = require('./scripts/upstashChatHistory');
+const {
+  fetchChatHistory,
+  saveChatHistory,
+  fetchChatContext,
+  saveChatContext,
+  fetchChatSummary,
+  saveChatSummary,
+  clearChatData
+} = require('./scripts/upstashChatHistory');
 const { fetchRemoteModelConfigStore, saveRemoteModelConfigStore, getDefaultModelConfig } = require('./scripts/upstashModelConfig');
 
 const app = express();
@@ -880,9 +888,55 @@ app.post('/v1/worldstate/mutate', async (req, res) => {
 app.get('/v1/chat/history', async (req, res) => {
   try {
     const history = await fetchChatHistory();
-    res.json({ messages: history || [] });
+    const context = await fetchChatContext();
+    res.json({ messages: history || [], context: context || '' });
   } catch (err) {
     res.status(500).json({ error: { message: err.message, type: 'chat_history_error' } });
+  }
+});
+
+app.post('/v1/chat/history', async (req, res) => {
+  try {
+    const { messages, context } = req.body;
+    if (Array.isArray(messages)) {
+      await saveChatHistory(messages);
+    }
+    if (typeof context === 'string') {
+      await saveChatContext(context);
+    }
+    res.json({ status: 'ok', message: 'Chat history and context saved successfully' });
+  } catch (err) {
+    res.status(500).json({ error: { message: err.message, type: 'chat_history_save_error' } });
+  }
+});
+
+app.delete('/v1/chat/history', async (req, res) => {
+  try {
+    const clearContext = req.query.context === 'true';
+    const clearSummary = req.query.summary === 'true';
+    await clearChatData({ history: true, context: clearContext, summary: clearSummary });
+    res.json({ status: 'ok', message: 'Chat history cleared successfully' });
+  } catch (err) {
+    res.status(500).json({ error: { message: err.message, type: 'chat_history_clear_error' } });
+  }
+});
+
+app.get('/v1/chat/context', async (req, res) => {
+  try {
+    const context = await fetchChatContext();
+    res.json({ context: context || '' });
+  } catch (err) {
+    res.status(500).json({ error: { message: err.message, type: 'chat_context_error' } });
+  }
+});
+
+app.post('/v1/chat/context', async (req, res) => {
+  try {
+    const { context } = req.body;
+    await saveChatContext(typeof context === 'string' ? context : '');
+    res.json({ status: 'ok', message: 'Chat context saved successfully' });
+  } catch (err) {
+    res.status(500).json({ error: { message: err.message, type: 'chat_context_save_error' } });
   }
 });
 
@@ -1021,15 +1075,29 @@ app.post('/v1/chat/completions', async (req, res) => {
       stream
     } = req.body;
 
-    // Overwrite chat history with non-system messages from request
+    // 0. Auto-save incoming context (system messages) and dialogue history
+    let chatOnlyMessages = [];
     if (Array.isArray(messages)) {
-      const chatOnlyMessages = messages.filter(m => m && m.role !== 'system');
+      const systemMessages = messages.filter(m => m && m.role === 'system');
+      if (systemMessages.length > 0) {
+        const contextText = systemMessages.map(m => {
+          if (typeof m.content === 'string') return m.content;
+          if (Array.isArray(m.content)) {
+            return m.content.map(p => (p && typeof p.text === 'string' ? p.text : JSON.stringify(p))).join('\n');
+          }
+          return JSON.stringify(m.content);
+        }).join('\n\n');
+        
+        saveChatContext(contextText).catch(err => {
+          console.warn('[PROXY] Failed to auto-save chat context:', err.message);
+        });
+      }
+
+      chatOnlyMessages = messages.filter(m => m && m.role !== 'system');
       if (chatOnlyMessages.length > 0) {
-        try {
-          await saveChatHistory(chatOnlyMessages);
-        } catch (err) {
+        saveChatHistory(chatOnlyMessages).catch(err => {
           console.warn('[PROXY] Failed to auto-save chat history:', err.message);
-        }
+        });
       }
     }
 
@@ -1183,6 +1251,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       let doneSent = false;
       let cleanedUp = false;
       let streamTimer = null;
+      let accumulatedAssistantText = '';
 
       const streamProcessor = (fixFormat || autoLineBreak)
         ? new StreamTextProcessor({ fixFormat, autoLineBreak })
@@ -1265,6 +1334,10 @@ app.post('/v1/chat/completions', async (req, res) => {
               content = streamProcessor.processChunk(content);
             }
 
+            if (content) {
+              accumulatedAssistantText += content;
+            }
+
             delta.content = content;
             delete delta.reasoning_content;
           }
@@ -1329,6 +1402,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         if (streamProcessor) {
           const finalChunk = streamProcessor.flush();
           if (finalChunk) {
+            accumulatedAssistantText += finalChunk;
             safeWrite(res, `data: ${JSON.stringify({
               id: `chatcmpl-${Date.now()}`,
               object: 'chat.completion.chunk',
@@ -1337,6 +1411,12 @@ app.post('/v1/chat/completions', async (req, res) => {
               choices: [{ index: 0, delta: { content: finalChunk }, finish_reason: null }]
             })}\n\n`);
           }
+        }
+
+        if (accumulatedAssistantText.trim() && Array.isArray(chatOnlyMessages) && chatOnlyMessages.length > 0) {
+          saveChatHistory([...chatOnlyMessages, { role: 'assistant', content: accumulatedAssistantText }]).catch(err => {
+            console.warn('[PROXY] Failed to update chat history with assistant stream:', err.message);
+          });
         }
 
         if (!doneSent) {
@@ -1427,9 +1507,14 @@ app.post('/v1/chat/completions', async (req, res) => {
 
       res.json(openaiResponse);
 
-      // Trigger background state tracker asynchronously
+      // Trigger background state tracker and update chat history asynchronously
       const fullAssistantText = openaiResponse.choices?.[0]?.message?.content || '';
       if (fullAssistantText) {
+        if (Array.isArray(chatOnlyMessages) && chatOnlyMessages.length > 0) {
+          saveChatHistory([...chatOnlyMessages, { role: 'assistant', content: fullAssistantText }]).catch(err => {
+            console.warn('[PROXY] Failed to update chat history with assistant response:', err.message);
+          });
+        }
         setImmediate(() => {
           analyzeAndUpdateState(processedMessages, fullAssistantText).catch(err => {
             console.warn('[PROXY] Background state tracker failed:', err.message);

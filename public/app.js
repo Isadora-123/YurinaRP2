@@ -17,7 +17,9 @@
     collapsedGroupKeys: new Set(JSON.parse(localStorage.getItem('yuri_collapsed_groups') || '[]')),
     treeScrollTop: 0,
     modelConfig: { fallback_enabled: false, fallback_models: [] },
-    modelTestResults: {}
+    modelTestResults: {},
+    currentChatMessages: [],
+    currentChatContext: ''
   };
 
   function saveCollapsedStates() {
@@ -174,7 +176,14 @@
     btnCloseModal: document.getElementById('btnCloseModal'),
     btnSubmitModalJson: document.getElementById('btnSubmitModalJson'),
 
-    // Chat History & Summary
+    // Chat History, Context & Summary
+    chatContextInput: document.getElementById('chatContextInput'),
+    contextCharBadge: document.getElementById('contextCharBadge'),
+    btnCopyContext: document.getElementById('btnCopyContext'),
+    btnSaveContext: document.getElementById('btnSaveContext'),
+    historyMsgBadge: document.getElementById('historyMsgBadge'),
+    btnCopyAllHistory: document.getElementById('btnCopyAllHistory'),
+    btnClearHistory: document.getElementById('btnClearHistory'),
     chatHistoryContainer: document.getElementById('chatHistoryContainer'),
     btnRefreshHistory: document.getElementById('btnRefreshHistory'),
     summaryResult: document.getElementById('summaryResult'),
@@ -2077,6 +2086,49 @@
       });
     }
 
+    // Chat History, Context & Summary Events
+    if (el.btnCopyContext) {
+      el.btnCopyContext.addEventListener('click', () => {
+        if (!el.chatContextInput) return;
+        const text = el.chatContextInput.value;
+        if (!text) {
+          log('Context box is empty.', 'warn');
+          return;
+        }
+        navigator.clipboard.writeText(text).then(() => {
+          log('Copied chat context to clipboard!', 'info');
+        }).catch(err => {
+          log(`Failed to copy context: ${err.message}`, 'error');
+        });
+      });
+    }
+
+    if (el.btnSaveContext) {
+      el.btnSaveContext.addEventListener('click', () => {
+        saveChatContext();
+      });
+    }
+
+    if (el.chatContextInput) {
+      el.chatContextInput.addEventListener('input', () => {
+        if (el.contextCharBadge) {
+          el.contextCharBadge.textContent = `${el.chatContextInput.value.length.toLocaleString()} chars`;
+        }
+      });
+    }
+
+    if (el.btnCopyAllHistory) {
+      el.btnCopyAllHistory.addEventListener('click', () => {
+        copyAllHistory();
+      });
+    }
+
+    if (el.btnClearHistory) {
+      el.btnClearHistory.addEventListener('click', () => {
+        clearChatHistory();
+      });
+    }
+
     if (el.btnRefreshHistory) {
       el.btnRefreshHistory.addEventListener('click', () => {
         loadChatHistory();
@@ -2105,58 +2157,131 @@
 
   // --- CHAT HISTORY & SUMMARY LOGIC ---
   async function loadChatHistory() {
-    if (!el.chatHistoryContainer) return;
+    if (!el.chatHistoryContainer && !el.chatContextInput) return;
     try {
       const res = await fetch('/v1/chat/history', { headers: getHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const messages = Array.isArray(data.messages) ? data.messages : [];
+      const contextText = typeof data.context === 'string' ? data.context : '';
 
-      if (messages.length === 0) {
-        el.chatHistoryContainer.innerHTML = '<div class="chat-history-empty">No chat history recorded yet. Send a request to populate history.</div>';
-        return;
+      state.currentChatMessages = messages;
+      state.currentChatContext = contextText;
+
+      // Update Context Box
+      if (el.chatContextInput) {
+        el.chatContextInput.value = contextText;
+      }
+      if (el.contextCharBadge) {
+        el.contextCharBadge.textContent = `${contextText.length.toLocaleString()} chars`;
       }
 
-      el.chatHistoryContainer.innerHTML = '';
-      messages.forEach((msg, idx) => {
-        const isUser = msg.role === 'user';
-        const roleClass = isUser ? 'chat-msg-user' : 'chat-msg-assistant';
-        const roleLabelClass = isUser ? 'chat-msg-role-user' : 'chat-msg-role-assistant';
-        const roleText = isUser ? 'User' : 'Assistant';
-        const contentText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2);
+      // Update History Badge
+      if (el.historyMsgBadge) {
+        el.historyMsgBadge.textContent = `${messages.length} msgs`;
+      }
 
-        const msgDiv = document.createElement('div');
-        msgDiv.className = `chat-msg ${roleClass}`;
-        msgDiv.innerHTML = `
-          <div class="chat-msg-header">
-            <span class="chat-msg-role ${roleLabelClass}">${escapeHtml(roleText)}</span>
-            <button class="btn-icon btn-copy-msg" data-msg-idx="${idx}" title="Copy message text">
-              <i data-lucide="copy"></i>
-            </button>
-          </div>
-          <div class="chat-msg-body">${escapeHtml(contentText)}</div>
-        `;
-
-        const copyBtn = msgDiv.querySelector('.btn-copy-msg');
-        if (copyBtn) {
-          copyBtn.addEventListener('click', () => {
-            navigator.clipboard.writeText(contentText).then(() => {
-              log('Copied message text to clipboard!', 'info');
-            }).catch(err => {
-              log(`Failed to copy message: ${err.message}`, 'error');
-            });
-          });
+      // Update Chat Messages Container
+      if (el.chatHistoryContainer) {
+        if (messages.length === 0) {
+          el.chatHistoryContainer.innerHTML = '<div class="chat-history-empty">No chat history recorded yet. Send a request to populate history.</div>';
+          return;
         }
 
-        el.chatHistoryContainer.appendChild(msgDiv);
-      });
+        el.chatHistoryContainer.innerHTML = '';
+        messages.forEach((msg, idx) => {
+          const isUser = msg.role === 'user';
+          const roleClass = isUser ? 'chat-msg-user' : 'chat-msg-assistant';
+          const roleLabelClass = isUser ? 'chat-msg-role-user' : 'chat-msg-role-assistant';
+          const roleText = isUser ? 'User' : 'Assistant';
+          const contentText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2);
 
-      if (window.lucide) window.lucide.createIcons();
+          const msgDiv = document.createElement('div');
+          msgDiv.className = `chat-msg ${roleClass}`;
+          msgDiv.innerHTML = `
+            <div class="chat-msg-header">
+              <span class="chat-msg-role ${roleLabelClass}">${escapeHtml(roleText)}</span>
+              <button class="btn-icon btn-copy-msg" data-msg-idx="${idx}" title="Copy message text">
+                <i data-lucide="copy"></i>
+              </button>
+            </div>
+            <div class="chat-msg-body">${escapeHtml(contentText)}</div>
+          `;
+
+          const copyBtn = msgDiv.querySelector('.btn-copy-msg');
+          if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+              navigator.clipboard.writeText(contentText).then(() => {
+                log('Copied message text to clipboard!', 'info');
+              }).catch(err => {
+                log(`Failed to copy message: ${err.message}`, 'error');
+              });
+            });
+          }
+
+          el.chatHistoryContainer.appendChild(msgDiv);
+        });
+
+        if (window.lucide) window.lucide.createIcons();
+      }
     } catch (err) {
       log(`Failed to load chat history: ${err.message}`, 'error');
       if (el.chatHistoryContainer) {
         el.chatHistoryContainer.innerHTML = `<div class="chat-history-empty text-danger">Error loading history: ${escapeHtml(err.message)}</div>`;
       }
+    }
+  }
+
+  async function saveChatContext() {
+    if (!el.chatContextInput) return;
+    const contextVal = el.chatContextInput.value;
+    try {
+      const res = await fetch('/v1/chat/context', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ context: contextVal })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      state.currentChatContext = contextVal;
+      if (el.contextCharBadge) {
+        el.contextCharBadge.textContent = `${contextVal.length.toLocaleString()} chars`;
+      }
+      log('Chat context saved successfully to Upstash Redis!', 'info');
+    } catch (err) {
+      log(`Failed to save chat context: ${err.message}`, 'error');
+    }
+  }
+
+  function copyAllHistory() {
+    if (!state.currentChatMessages || state.currentChatMessages.length === 0) {
+      log('No messages in chat history to copy.', 'warn');
+      return;
+    }
+    const formatted = state.currentChatMessages.map(m => {
+      const roleName = m.role === 'user' ? 'User' : 'Assistant';
+      const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2);
+      return `[${roleName}]:\n${text}`;
+    }).join('\n\n---\n\n');
+
+    navigator.clipboard.writeText(formatted).then(() => {
+      log('Copied all chat messages to clipboard!', 'info');
+    }).catch(err => {
+      log(`Failed to copy messages: ${err.message}`, 'error');
+    });
+  }
+
+  async function clearChatHistory() {
+    if (!confirm('Are you sure you want to clear chat messages? (Context will be preserved)')) return;
+    try {
+      const res = await fetch('/v1/chat/history?context=false', {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      log('Chat messages cleared successfully.', 'info');
+      loadChatHistory();
+    } catch (err) {
+      log(`Failed to clear chat history: ${err.message}`, 'error');
     }
   }
 

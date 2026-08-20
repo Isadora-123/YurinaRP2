@@ -12,6 +12,7 @@ function getUpstashConfig() {
 // Memory fallback for local testing
 let memoryChatHistory = [];
 let memoryChatSummary = '';
+let memoryChatContext = '';
 
 /**
  * Fetches the latest chat history array from Upstash Redis.
@@ -82,6 +83,63 @@ async function saveChatHistory(messages) {
 }
 
 /**
+ * Fetches the latest chat context string from Upstash Redis.
+ */
+async function fetchChatContext() {
+  const config = getUpstashConfig();
+  if (!config) {
+    return memoryChatContext;
+  }
+
+  try {
+    const res = await fetch(`${config.url}/get/chat_context`, {
+      headers: { Authorization: `Bearer ${config.token}` }
+    });
+    if (!res.ok) return memoryChatContext;
+    const data = await res.json();
+    if (!data || data.result === null || data.result === undefined) return memoryChatContext;
+    
+    let parsed = data.result;
+    if (typeof parsed === 'string') {
+      try {
+        const jsonVal = JSON.parse(parsed);
+        if (typeof jsonVal === 'string') parsed = jsonVal;
+      } catch (e) {}
+    }
+    return typeof parsed === 'string' ? parsed : String(parsed);
+  } catch (err) {
+    console.warn('[UPSTASH-HISTORY] Failed to fetch chat context:', err.message);
+    return memoryChatContext;
+  }
+}
+
+/**
+ * Overwrites the chat context string on Upstash Redis.
+ */
+async function saveChatContext(contextText) {
+  const text = typeof contextText === 'string' ? contextText : '';
+  memoryChatContext = text;
+
+  const config = getUpstashConfig();
+  if (!config) return true;
+
+  try {
+    const res = await fetch(`${config.url}/set/chat_context`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(text)
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[UPSTASH-HISTORY] Failed to save chat context:', err.message);
+    return false;
+  }
+}
+
+/**
  * Fetches the latest chat summary text from Upstash Redis.
  */
 async function fetchChatSummary() {
@@ -130,9 +188,30 @@ async function saveChatSummary(summaryText) {
   }
 }
 
+/**
+ * Clears chat history, context, or summary from Upstash Redis & Memory.
+ */
+async function clearChatData(options = { history: true, context: false, summary: false }) {
+  const promises = [];
+  if (options.history) {
+    promises.push(saveChatHistory([]));
+  }
+  if (options.context) {
+    promises.push(saveChatContext(''));
+  }
+  if (options.summary) {
+    promises.push(saveChatSummary(''));
+  }
+  const results = await Promise.all(promises);
+  return results.every(Boolean);
+}
+
 module.exports = {
   fetchChatHistory,
   saveChatHistory,
+  fetchChatContext,
+  saveChatContext,
   fetchChatSummary,
-  saveChatSummary
+  saveChatSummary,
+  clearChatData
 };
