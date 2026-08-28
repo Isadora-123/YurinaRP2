@@ -156,6 +156,15 @@ function getModelRegistryEntry(modelId) {
   return modelConfig.model_registry.find(m => m.id === modelId) || null;
 }
 
+function getKnownThinkingType(modelId) {
+  const mLower = (modelId || '').toLowerCase();
+  if (mLower.includes('kimi') || mLower.includes('moonshot')) return 'kimi';
+  if (mLower.includes('minimax')) return 'minimax';
+  if (mLower.includes('nemotron') || mLower.includes('ultra') || mLower.includes('super') || mLower.includes('nano')) return 'nemotron';
+  if (mLower.includes('deepseek') || mLower.includes('qwq') || mLower.includes('qwen3')) return 'standard';
+  return null;
+}
+
 function updateThinkingCapability(modelId, capable, reqBody) {
   if (!Array.isArray(modelConfig.model_registry)) {
     modelConfig.model_registry = [];
@@ -165,9 +174,9 @@ function updateThinkingCapability(modelId, capable, reqBody) {
 
   let thinkingType = 'none';
   if (capable && reqBody) {
-    const mLower = (modelId || '').toLowerCase();
-    if (mLower.includes('kimi') || mLower.includes('moonshot')) {
-      thinkingType = 'kimi';
+    const known = getKnownThinkingType(modelId);
+    if (known) {
+      thinkingType = known;
     } else if (reqBody.reasoning_effort || reqBody.extra_body?.chat_template_kwargs?.reasoning_effort) {
       thinkingType = 'nemotron';
     } else if (reqBody.extra_body?.chat_template_kwargs?.thinking_mode) {
@@ -193,12 +202,9 @@ function updateThinkingCapability(modelId, capable, reqBody) {
   } else {
     entry.last_used = now;
     if (capable) {
-      const wasUnknownOrNone = !entry.thinking_capable;
       entry.thinking_capable = true;
       entry.thinking_type = thinkingType;
-      if (wasUnknownOrNone) {
-        entry.thinking_enabled = true;
-      }
+      entry.thinking_enabled = true;
     } else {
       entry.thinking_capable = false;
       entry.thinking_type = 'none';
@@ -217,15 +223,16 @@ function registerModelUsage(modelId) {
   }
   const now = new Date().toISOString();
   let entry = modelConfig.model_registry.find(m => m.id === modelId);
+  const knownType = getKnownThinkingType(modelId);
 
   if (!entry) {
     entry = {
       id: modelId,
       label: modelId.includes('/') ? modelId.split('/').pop() : modelId,
       last_used: now,
-      thinking_capable: false,
-      thinking_type: 'unknown',
-      thinking_enabled: false
+      thinking_capable: !!knownType,
+      thinking_type: knownType || 'unknown',
+      thinking_enabled: true
     };
     modelConfig.model_registry.unshift(entry);
     if (modelConfig.model_registry.length > 10) {
@@ -233,6 +240,11 @@ function registerModelUsage(modelId) {
     }
   } else {
     entry.last_used = now;
+    if (knownType && (entry.thinking_type === 'unknown' || entry.thinking_type === 'none')) {
+      entry.thinking_capable = true;
+      entry.thinking_type = knownType;
+      entry.thinking_enabled = true;
+    }
     const idx = modelConfig.model_registry.indexOf(entry);
     if (idx > 0) {
       modelConfig.model_registry.splice(idx, 1);
@@ -1214,40 +1226,14 @@ app.post('/v1/chat/completions', async (req, res) => {
 
     // 3. Smart Thinking Mode & Model Registry Auto-Tracking
     const registryEntry = registerModelUsage(primaryModel);
+    const knownType = getKnownThinkingType(primaryModel) || getKnownThinkingType(cleanModel);
 
-    let requestEnableThinking = false;
-    let requestShowReasoning = false;
-    let detectedThinkingType = null; // 'standard' | 'minimax' | 'nemotron' | 'kimi' | null
-
-    if (registryEntry) {
-      if (registryEntry.thinking_enabled) {
-        requestEnableThinking = true;
-        requestShowReasoning = true;
-        detectedThinkingType = registryEntry.thinking_type;
-      } else if (registryEntry.thinking_type === 'unknown') {
-        // Auto-detect on first call
-        requestEnableThinking = true;
-        requestShowReasoning = true;
-      }
-    } else {
-      // No entry yet, will auto-detect
-      requestEnableThinking = true;
-      requestShowReasoning = true;
-    }
-
-    // Resolve thinking type if not already known from registry
-    if (requestEnableThinking && !detectedThinkingType) {
-      const pLower = (typeof cleanModel === 'string' ? cleanModel : primaryModel).toLowerCase();
-      if (pLower.includes('kimi') || pLower.includes('moonshot')) {
-        detectedThinkingType = 'kimi';
-      } else if (pLower.includes('minimax')) {
-        detectedThinkingType = 'minimax';
-      } else if (pLower.includes('nemotron') || pLower.includes('ultra') || pLower.includes('super') || pLower.includes('nano')) {
-        detectedThinkingType = 'nemotron';
-      } else {
-        detectedThinkingType = 'standard';
-      }
-    }
+    // Thinking is enabled by default unless user explicitly turned it off in UI registry
+    let requestEnableThinking = registryEntry ? (registryEntry.thinking_enabled !== false) : true;
+    let requestShowReasoning = requestEnableThinking;
+    let detectedThinkingType = (registryEntry?.thinking_type && registryEntry.thinking_type !== 'none' && registryEntry.thinking_type !== 'unknown')
+      ? registryEntry.thinking_type
+      : (knownType || 'standard');
 
     // Build baseRequest with correct thinking param placement per model type
     // Nemotron: reasoning_effort & reasoning_budget are TOP-LEVEL request body fields
@@ -1365,14 +1351,14 @@ app.post('/v1/chat/completions', async (req, res) => {
 
             if (requestShowReasoning) {
               if (reasoning && !reasoningOpen) {
-                content = `${startTag}\n${reasoning.replace(/\n/g, '\\n')}`;
+                content = `${startTag}\n${reasoning}`;
                 reasoningOpen = true;
               } else if (reasoning) {
-                content = reasoning.replace(/\n/g, '\\n');
+                content = reasoning;
               }
 
               if (delta.content && reasoningOpen) {
-                content += `\n${endTag}\n\n${delta.content}`;
+                content = `\n${endTag}\n\n${delta.content}`;
                 reasoningOpen = false;
               }
             }
@@ -1386,7 +1372,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
 
             delta.content = content;
-            delete delta.reasoning_content;
           }
 
           safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
@@ -1444,6 +1429,20 @@ app.post('/v1/chat/completions', async (req, res) => {
           for (const line of buffer.split('\n')) {
             processLine(line);
           }
+        }
+
+        if (reasoningOpen) {
+          const endTag = modelConfig.thinking_end_tag || '</think>';
+          const closeTag = `\n${endTag}\n\n`;
+          accumulatedAssistantText += closeTag;
+          safeWrite(res, `data: ${JSON.stringify({
+            id: `chatcmpl-${Date.now()}`,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: model,
+            choices: [{ index: 0, delta: { content: closeTag }, finish_reason: null }]
+          })}\n\n`);
+          reasoningOpen = false;
         }
 
         if (streamProcessor) {
@@ -1522,10 +1521,10 @@ app.post('/v1/chat/completions', async (req, res) => {
         model: model,
         choices: (response.data.choices || []).map((choice, i) => {
           let content = choice.message?.content || '';
+          const reasoningContent = choice.message?.reasoning_content;
 
-          if (requestShowReasoning && choice.message?.reasoning_content) {
-            const safeReasoning = choice.message.reasoning_content.replace(/\n/g, '\\n');
-            content = `${startTag}\n${safeReasoning}\n${endTag}\n\n${content}`;
+          if (requestShowReasoning && reasoningContent) {
+            content = `${startTag}\n${reasoningContent}\n${endTag}\n\n${content}`;
           }
 
           if (autoLineBreak) {
@@ -1535,13 +1534,19 @@ app.post('/v1/chat/completions', async (req, res) => {
             content = fixTextFormatting(content, true);
           }
 
+          const messageObj = {
+            role: choice.message?.role || 'assistant',
+            content,
+            tool_calls: choice.message?.tool_calls
+          };
+
+          if (reasoningContent) {
+            messageObj.reasoning_content = reasoningContent;
+          }
+
           return {
             index: i,
-            message: {
-              role: choice.message?.role || 'assistant',
-              content,
-              tool_calls: choice.message?.tool_calls
-            },
+            message: messageObj,
             finish_reason: choice.finish_reason || 'stop'
           };
         }),
