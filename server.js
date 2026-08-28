@@ -6,8 +6,32 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
 const { timingSafeEqual } = require('crypto');
+
+// ─── Auto-load .env if available ───────────────────────────────────────────
+try {
+  const envPath = path.resolve(process.cwd(), '.env');
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    envContent.split(/\r?\n/).forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        const key = trimmed.substring(0, eqIdx).trim();
+        let val = trimmed.substring(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.substring(1, val.length - 1);
+        }
+        if (process.env[key] === undefined) {
+          process.env[key] = val;
+        }
+      }
+    });
+  }
+} catch (e) {}
 
 const { processEventTriggers } = require('./scripts/eventTriggers');
 const { applyAutoLineBreak, fixTextFormatting, StreamTextProcessor } = require('./scripts/formatFixer');
@@ -34,7 +58,7 @@ const PORT = process.env.PORT || 3000;
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
-const NIM_API_KEY = process.env.NIM_API_KEY;
+const NIM_API_KEY = process.env.NIM_API_KEY || process.env.NIM_KEY || process.env.NVAPI_KEY;
 const CLIENT_AUTH_KEY = process.env.CLIENT_AUTH_KEY;
 
 const SHOW_REASONING = process.env.SHOW_REASONING === 'true';

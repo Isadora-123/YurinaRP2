@@ -1295,9 +1295,22 @@ body.dark-theme {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-bottom: 8px;
-  padding-bottom: 4px;
+  padding-bottom: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.chat-msg-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chat-msg-header-right {
+  display: flex;
+  align-items: center;
 }
 
 .chat-msg-role {
@@ -1315,6 +1328,80 @@ body.dark-theme {
   color: #c084fc;
 }
 
+/* Assistant Message Tabs */
+.chat-msg-tabs {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(10, 15, 28, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.chat-msg-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 0.73rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.chat-msg-tab:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-msg-tab.active {
+  color: #fff;
+  background: rgba(168, 85, 247, 0.3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.chat-msg-tab.has-reasoning {
+  color: #c084fc;
+}
+
+.chat-msg-tab.has-reasoning:hover {
+  color: #e9d5ff;
+}
+
+.chat-msg-tab.has-reasoning.active {
+  color: #fff;
+  background: rgba(168, 85, 247, 0.4);
+}
+
+.chat-msg-tab i {
+  width: 12px;
+  height: 12px;
+}
+
+.reasoning-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c084fc;
+  display: inline-block;
+  box-shadow: 0 0 5px #c084fc;
+  margin-left: 2px;
+}
+
+.chat-msg-pane {
+  display: none;
+}
+
+.chat-msg-pane.active {
+  display: block;
+}
+
 .chat-msg-body {
   font-family: 'Fira Code', monospace;
   font-size: 0.85rem;
@@ -1322,6 +1409,37 @@ body.dark-theme {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-main);
+}
+
+.chat-msg-reasoning-body {
+  font-family: 'Fira Code', monospace;
+  font-size: 0.83rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d8b4fe;
+  background: rgba(168, 85, 247, 0.07);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.chat-msg-reasoning-empty {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-sm);
+  font-style: italic;
+}
+
+.chat-msg-reasoning-empty i {
+  width: 14px;
+  height: 14px;
+  color: var(--text-dim);
 }
 
 .summary-result-box {

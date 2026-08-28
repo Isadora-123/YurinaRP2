@@ -2156,6 +2156,64 @@
     }
   }
 
+  function parseAssistantMessage(msg) {
+    const rawContent = typeof msg === 'string' ? msg : (typeof msg?.content === 'string' ? msg.content : JSON.stringify(msg?.content || ''));
+    let reasoning = msg?.reasoning_content || msg?.reasoning || msg?.thought || '';
+    let cleanMessage = rawContent;
+
+    const startTag = state.modelConfig?.thinking_start_tag || '<think>';
+    const endTag = state.modelConfig?.thinking_end_tag || '</think>';
+
+    // First check custom configured thinking tags
+    if (startTag && endTag && cleanMessage.includes(startTag)) {
+      const sIdx = cleanMessage.indexOf(startTag);
+      const eIdx = cleanMessage.indexOf(endTag, sIdx + startTag.length);
+      if (eIdx !== -1) {
+        const extracted = cleanMessage.substring(sIdx + startTag.length, eIdx).trim();
+        if (!reasoning) reasoning = extracted;
+        cleanMessage = (cleanMessage.substring(0, sIdx) + cleanMessage.substring(eIdx + endTag.length)).trim();
+      } else {
+        const extracted = cleanMessage.substring(sIdx + startTag.length).trim();
+        if (!reasoning) reasoning = extracted;
+        cleanMessage = cleanMessage.substring(0, sIdx).trim();
+      }
+    }
+
+    // Check standard thinking tag pairs if reasoning not yet found
+    const standardTagPairs = [
+      { start: '<think>', end: '</think>' },
+      { start: '<thought>', end: '</thought>' },
+      { start: '<reasoning>', end: '</reasoning>' }
+    ];
+
+    for (const pair of standardTagPairs) {
+      if (cleanMessage.includes(pair.start)) {
+        const sIdx = cleanMessage.indexOf(pair.start);
+        const eIdx = cleanMessage.indexOf(pair.end, sIdx + pair.start.length);
+        if (eIdx !== -1) {
+          const extracted = cleanMessage.substring(sIdx + pair.start.length, eIdx).trim();
+          if (!reasoning) reasoning = extracted;
+          cleanMessage = (cleanMessage.substring(0, sIdx) + cleanMessage.substring(eIdx + pair.end.length)).trim();
+        } else {
+          const extracted = cleanMessage.substring(sIdx + pair.start.length).trim();
+          if (!reasoning) reasoning = extracted;
+          cleanMessage = cleanMessage.substring(0, sIdx).trim();
+        }
+      }
+    }
+
+    if (reasoning) {
+      reasoning = reasoning.replace(/\\n/g, '\n').trim();
+    }
+
+    return {
+      rawContent,
+      cleanMessage: cleanMessage || rawContent,
+      reasoning: reasoning || null,
+      hasReasoning: !!(reasoning && reasoning.trim().length > 0)
+    };
+  }
+
   // --- CHAT HISTORY & SUMMARY LOGIC ---
   async function loadChatHistory() {
     if (!el.chatHistoryContainer && !el.chatContextInput) return;
@@ -2192,35 +2250,119 @@
         el.chatHistoryContainer.innerHTML = '';
         messages.forEach((msg, idx) => {
           const isUser = msg.role === 'user';
-          const roleClass = isUser ? 'chat-msg-user' : 'chat-msg-assistant';
-          const roleLabelClass = isUser ? 'chat-msg-role-user' : 'chat-msg-role-assistant';
-          const roleText = isUser ? 'User' : 'Assistant';
-          const contentText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2);
 
-          const msgDiv = document.createElement('div');
-          msgDiv.className = `chat-msg ${roleClass}`;
-          msgDiv.innerHTML = `
-            <div class="chat-msg-header">
-              <span class="chat-msg-role ${roleLabelClass}">${escapeHtml(roleText)}</span>
-              <button class="btn-icon btn-copy-msg" data-msg-idx="${idx}" title="Copy message text">
-                <i data-lucide="copy"></i>
-              </button>
-            </div>
-            <div class="chat-msg-body">${escapeHtml(contentText)}</div>
-          `;
+          if (isUser) {
+            const contentText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2);
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'chat-msg chat-msg-user';
+            msgDiv.innerHTML = `
+              <div class="chat-msg-header">
+                <div class="chat-msg-header-left">
+                  <span class="chat-msg-role chat-msg-role-user">User</span>
+                </div>
+                <div class="chat-msg-header-right">
+                  <button class="btn-icon btn-copy-msg" data-msg-idx="${idx}" title="Copy message text">
+                    <i data-lucide="copy"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="chat-msg-body">${escapeHtml(contentText)}</div>
+            `;
 
-          const copyBtn = msgDiv.querySelector('.btn-copy-msg');
-          if (copyBtn) {
-            copyBtn.addEventListener('click', () => {
-              navigator.clipboard.writeText(contentText).then(() => {
-                log('Copied message text to clipboard!', 'info');
-              }).catch(err => {
-                log(`Failed to copy message: ${err.message}`, 'error');
+            const copyBtn = msgDiv.querySelector('.btn-copy-msg');
+            if (copyBtn) {
+              copyBtn.addEventListener('click', () => {
+                navigator.clipboard.writeText(contentText).then(() => {
+                  log('Copied user message to clipboard!', 'info');
+                }).catch(err => {
+                  log(`Failed to copy message: ${err.message}`, 'error');
+                });
+              });
+            }
+
+            el.chatHistoryContainer.appendChild(msgDiv);
+          } else {
+            // Assistant Message with 2 Tabs: Message and Reasoning
+            const parsed = parseAssistantMessage(msg);
+            const hasReasoning = parsed.hasReasoning;
+            const cleanText = parsed.cleanMessage;
+            const reasoningText = parsed.reasoning || '';
+
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'chat-msg chat-msg-assistant';
+            msgDiv.innerHTML = `
+              <div class="chat-msg-header">
+                <div class="chat-msg-header-left">
+                  <span class="chat-msg-role chat-msg-role-assistant">Assistant</span>
+                  <div class="chat-msg-tabs">
+                    <button type="button" class="chat-msg-tab active" data-tab="message" title="View Response Message">
+                      <i data-lucide="message-square"></i>
+                      <span>Message</span>
+                    </button>
+                    <button type="button" class="chat-msg-tab ${hasReasoning ? 'has-reasoning' : 'no-reasoning'}" data-tab="reasoning" title="${hasReasoning ? 'View Model Reasoning' : 'No reasoning recorded'}">
+                      <i data-lucide="brain"></i>
+                      <span>Reasoning</span>
+                      ${hasReasoning ? '<span class="reasoning-dot" title="Reasoning available"></span>' : ''}
+                    </button>
+                  </div>
+                </div>
+                <div class="chat-msg-header-right">
+                  <button class="btn-icon btn-copy-msg" data-msg-idx="${idx}" title="Copy active tab text">
+                    <i data-lucide="copy"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="chat-msg-tab-content">
+                <div class="chat-msg-pane chat-msg-pane-message active">
+                  <div class="chat-msg-body">${escapeHtml(cleanText)}</div>
+                </div>
+                <div class="chat-msg-pane chat-msg-pane-reasoning">
+                  ${hasReasoning
+                    ? `<div class="chat-msg-reasoning-body">${escapeHtml(reasoningText)}</div>`
+                    : `<div class="chat-msg-reasoning-empty"><i data-lucide="info"></i> No reasoning content recorded for this message.</div>`
+                  }
+                </div>
+              </div>
+            `;
+
+            let currentActiveTab = 'message';
+            const tabButtons = msgDiv.querySelectorAll('.chat-msg-tab');
+            const paneMessage = msgDiv.querySelector('.chat-msg-pane-message');
+            const paneReasoning = msgDiv.querySelector('.chat-msg-pane-reasoning');
+
+            tabButtons.forEach(tabBtn => {
+              tabBtn.addEventListener('click', () => {
+                const targetTab = tabBtn.getAttribute('data-tab');
+                if (targetTab === currentActiveTab) return;
+                currentActiveTab = targetTab;
+
+                tabButtons.forEach(t => t.classList.remove('active'));
+                tabBtn.classList.add('active');
+
+                if (targetTab === 'message') {
+                  paneMessage?.classList.add('active');
+                  paneReasoning?.classList.remove('active');
+                } else {
+                  paneReasoning?.classList.add('active');
+                  paneMessage?.classList.remove('active');
+                }
               });
             });
-          }
 
-          el.chatHistoryContainer.appendChild(msgDiv);
+            const copyBtn = msgDiv.querySelector('.btn-copy-msg');
+            if (copyBtn) {
+              copyBtn.addEventListener('click', () => {
+                const textToCopy = (currentActiveTab === 'reasoning' && hasReasoning) ? reasoningText : cleanText;
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                  log(`Copied ${currentActiveTab === 'reasoning' ? 'reasoning' : 'assistant message'} to clipboard!`, 'info');
+                }).catch(err => {
+                  log(`Failed to copy message: ${err.message}`, 'error');
+                });
+              });
+            }
+
+            el.chatHistoryContainer.appendChild(msgDiv);
+          }
         });
 
         if (window.lucide) window.lucide.createIcons();
