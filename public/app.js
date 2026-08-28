@@ -1297,6 +1297,7 @@
         let typeLabel = 'Standard Thinking';
         if (m.thinking_type === 'minimax') typeLabel = 'MiniMax Thinking';
         if (m.thinking_type === 'nemotron') typeLabel = 'Nemotron Reasoning';
+        if (m.thinking_type === 'kimi') typeLabel = 'Kimi Reasoning';
         thinkingBadge = `<span class="model-status-badge status-online"><i data-lucide="brain"></i> ${typeLabel}</span>`;
         thinkingToggle = `
           <label class="switch switch-sm" title="Toggle Thinking for this model">

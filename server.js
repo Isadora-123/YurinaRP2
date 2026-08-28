@@ -95,7 +95,12 @@ const MODEL_MAPPING = {
   'step-3.7-flash': 'stepfun-ai/step-3.7-flash',
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
   'deepseek-v4-pro': 'deepseek-ai/deepseek-v4-pro',
-  'glm-5.2': 'z-ai/glm-5.2'
+  'glm-5.2': 'z-ai/glm-5.2',
+  'kimi-k3': 'moonshotai/kimi-k3',
+  'kimi': 'moonshotai/kimi-k3',
+  'kimi-k2.6': 'moonshotai/kimi-k2.6',
+  'moonshotai/kimi-k3': 'moonshotai/kimi-k3',
+  'moonshotai/kimi-k2.6': 'moonshotai/kimi-k2.6'
 };
 
 // Dynamic Model Configuration stored in Upstash Redis
@@ -136,7 +141,10 @@ function updateThinkingCapability(modelId, capable, reqBody) {
 
   let thinkingType = 'none';
   if (capable && reqBody) {
-    if (reqBody.reasoning_effort || reqBody.extra_body?.chat_template_kwargs?.reasoning_effort) {
+    const mLower = (modelId || '').toLowerCase();
+    if (mLower.includes('kimi') || mLower.includes('moonshot')) {
+      thinkingType = 'kimi';
+    } else if (reqBody.reasoning_effort || reqBody.extra_body?.chat_template_kwargs?.reasoning_effort) {
       thinkingType = 'nemotron';
     } else if (reqBody.extra_body?.chat_template_kwargs?.thinking_mode) {
       thinkingType = 'minimax';
@@ -1072,7 +1080,10 @@ app.post('/v1/chat/completions', async (req, res) => {
       messages,
       temperature,
       max_tokens,
-      stream
+      stream,
+      reasoning_effort,
+      reasoning_budget,
+      extra_body
     } = req.body;
 
     // 0. Auto-save incoming context (system messages) and dialogue history
@@ -1182,7 +1193,7 @@ app.post('/v1/chat/completions', async (req, res) => {
 
     let requestEnableThinking = false;
     let requestShowReasoning = false;
-    let detectedThinkingType = null; // 'standard' | 'minimax' | 'nemotron' | null
+    let detectedThinkingType = null; // 'standard' | 'minimax' | 'nemotron' | 'kimi' | null
 
     if (registryEntry) {
       if (registryEntry.thinking_enabled) {
@@ -1203,7 +1214,9 @@ app.post('/v1/chat/completions', async (req, res) => {
     // Resolve thinking type if not already known from registry
     if (requestEnableThinking && !detectedThinkingType) {
       const pLower = (typeof cleanModel === 'string' ? cleanModel : primaryModel).toLowerCase();
-      if (pLower.includes('minimax')) {
+      if (pLower.includes('kimi') || pLower.includes('moonshot')) {
+        detectedThinkingType = 'kimi';
+      } else if (pLower.includes('minimax')) {
         detectedThinkingType = 'minimax';
       } else if (pLower.includes('nemotron') || pLower.includes('ultra') || pLower.includes('super') || pLower.includes('nano')) {
         detectedThinkingType = 'nemotron';
@@ -1214,6 +1227,7 @@ app.post('/v1/chat/completions', async (req, res) => {
 
     // Build baseRequest with correct thinking param placement per model type
     // Nemotron: reasoning_effort & reasoning_budget are TOP-LEVEL request body fields
+    // Kimi (Moonshot): reasoning_effort is a TOP-LEVEL request body field ('low', 'high', 'max', default: 'max')
     // Standard: { thinking: true } goes inside extra_body.chat_template_kwargs
     // MiniMax:  { thinking_mode: 'enabled' } goes inside extra_body.chat_template_kwargs
     const baseRequest = {
@@ -1224,14 +1238,23 @@ app.post('/v1/chat/completions', async (req, res) => {
     };
 
     if (requestEnableThinking && detectedThinkingType) {
-      if (detectedThinkingType === 'nemotron') {
-        baseRequest.reasoning_effort = 'high';
-        baseRequest.reasoning_budget = 16384;
+      if (detectedThinkingType === 'kimi') {
+        let effort = 'max';
+        if (typeof reasoning_effort === 'string') {
+          const lowerEffort = reasoning_effort.toLowerCase().trim();
+          if (['low', 'high', 'max'].includes(lowerEffort)) {
+            effort = lowerEffort;
+          }
+        }
+        baseRequest.reasoning_effort = effort;
+      } else if (detectedThinkingType === 'nemotron') {
+        baseRequest.reasoning_effort = reasoning_effort || 'high';
+        baseRequest.reasoning_budget = reasoning_budget || 16384;
       } else if (detectedThinkingType === 'minimax') {
-        baseRequest.extra_body = { chat_template_kwargs: { thinking_mode: 'enabled' } };
+        baseRequest.extra_body = extra_body || { chat_template_kwargs: { thinking_mode: 'enabled' } };
       } else {
         // standard (DeepSeek, Qwen, etc.)
-        baseRequest.extra_body = { chat_template_kwargs: { thinking: true } };
+        baseRequest.extra_body = extra_body || { chat_template_kwargs: { thinking: true } };
       }
     }
 
