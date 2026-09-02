@@ -67,8 +67,8 @@ const SKIP_VALIDATION = process.env.SKIP_VALIDATION === 'true';
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
 const MAX_TOKENS_LIMIT = 65536;
-const REQUEST_TIMEOUT_MS = 180000;
-const VALIDATION_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 600000;
+const VALIDATION_TIMEOUT_MS = 30000;
 const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB
 
 if (SHOW_REASONING) console.log('[CONFIG] Reasoning display: ENABLED');
@@ -1257,7 +1257,7 @@ app.post('/v1/chat/completions', async (req, res) => {
     const baseRequest = {
       messages: processedMessages,
       temperature: temperature ?? 0.7,
-      max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
+      max_tokens: Math.min(max_tokens ?? 16384, MAX_TOKENS_LIMIT),
       stream: stream || false,
     };
 
