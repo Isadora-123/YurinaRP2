@@ -438,7 +438,7 @@ async function callWithFallback(baseRequest, models) {
 
   const makeRequest = async (reqBody, modelName) => {
     // If streaming, timeout after 25 seconds of no headers. If not, timeout after 90 seconds.
-    const requestTimeout = reqBody.stream ? 25000 : 90000;
+    const requestTimeout = reqBody.stream ? 120000 : 600000;
     return await axios.post(
       `${NIM_API_BASE}/chat/completions`,
       { ...reqBody, model: modelName },
